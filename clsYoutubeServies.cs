@@ -1,190 +1,202 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
+using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
-using System.Text.Json;
+using YoutubeExplode;
+using YoutubeExplode.Videos.Streams;
 
 namespace YoutubeServies
 {
     public class clsYoutubeServies
     {
-        public string VideoUrl { get; set; } // input property
+        public string VideoUrl { get; set; }
 
-        public string ChannelName { get; private set; } // output property
-        public string VideoTitle { get; private set; } // output property
-        public List<QualityInfo> AvailableQualities { get; private set; } // output property  
+        public string ChannelName { get; private set; }
+        public string VideoTitle { get; private set; }
+        public List<QualityInfo> AvailableQualities { get; private set; }
 
-        public int SelectedQualityHeight { get; set; } // input property
-        public string SavePath { get; set; } // input property
+        public int SelectedQualityHeight { get; set; }
+        public string SavePath { get; set; }
 
-        // Cache للبيانات
-        private YtDlpResult _cachedResult;
-        private DateTime _cacheTime;
-        private readonly TimeSpan _cacheExpiry = TimeSpan.FromMinutes(10);
+        private YoutubeClient _youtube;
+        private StreamManifest _streamManifest;
+        private YoutubeExplode.Videos.Video _videoMetadata;
 
         public class QualityInfo
         {
             public int Height { get; set; }
-            public double? FileSize { get; set; }
-            public string FormatId { get; set; }
+            public long? FileSize { get; set; }
+            public IVideoStreamInfo VideoStream { get; set; }
+            public IAudioStreamInfo AudioStream { get; set; }
+
             public string DisplayText => $"{Height}p";
             public string SizeText => FileSize.HasValue
-                ? $"{(FileSize.Value / (1024 * 1024)):0.00} MB"
+                ? $"{(FileSize.Value / (1024.0 * 1024.0)):0.00} MB"
                 : "Unknown";
         }
 
-        public clsYoutubeServies(string VideoURl)
+        public clsYoutubeServies(string videoUrl)
         {
+            VideoUrl = videoUrl;
             AvailableQualities = new List<QualityInfo>();
-            this.VideoUrl = VideoURl;
+            // لا تهيئة YoutubeClient هنا - سيتم تهيئته عند الحاجة
         }
 
-        // دالة واحدة لجلب كل المعلومات مرة واحدة فقط
+        private void EnsureYoutubeClientInitialized()
+        {
+            if (_youtube == null)
+            {
+                try
+                {
+                    _youtube = new YoutubeClient();
+                }
+                catch (Exception ex)
+                {
+                    throw new Exception($"Failed to initialize YouTube client: {ex.Message}", ex);
+                }
+            }
+        }
+
         public async Task GetVideoDetailsAsync()
         {
-            // استخدام الكاش إذا كان موجود
-            if (_cachedResult != null && (DateTime.Now - _cacheTime) < _cacheExpiry)
+            try
             {
-                ProcessCachedData();
-                return;
-            }
+                EnsureYoutubeClientInitialized();
 
-            ProcessStartInfo psi = new ProcessStartInfo
-            {
-                FileName = "yt-dlp.exe",
-                // Arguments محسنة لجلب كل الـ formats
-                Arguments = $"--no-playlist --skip-download --no-warnings -J {VideoUrl}",
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8
-            };
+                // جلب معلومات الفيديو
+                _videoMetadata = await _youtube.Videos.GetAsync(VideoUrl);
+                VideoTitle = _videoMetadata.Title;
+                ChannelName = _videoMetadata.Author.ChannelTitle;
 
-            using (Process process = new Process { StartInfo = psi })
-            {
-                process.Start();
+                // جلب معلومات الـ streams
+                _streamManifest = await _youtube.Videos.Streams.GetManifestAsync(VideoUrl);
 
-                string json = await process.StandardOutput.ReadToEndAsync();
+                // جلب أفضل صوت
+                var bestAudio = _streamManifest.GetAudioOnlyStreams()
+                    .Where(s => s != null)
+                    .OrderByDescending(s => s.Bitrate)
+                    .FirstOrDefault();
 
-                await Task.Run(() => process.WaitForExit());
+                // جلب جميع الجودات المتاحة
+                var videoStreams = _streamManifest.GetVideoOnlyStreams()
+                    .Where(s => s != null && s.VideoCodec != null && s.VideoCodec.Contains("avc"))
+                    .OrderBy(s => s.VideoResolution.Height)
+                    .GroupBy(s => s.VideoResolution.Height)
+                    .Select(g => g.OrderByDescending(s => s.Bitrate).First());
 
-                _cachedResult = JsonSerializer.Deserialize<YtDlpResult>(json);
-                _cacheTime = DateTime.Now;
+                AvailableQualities.Clear();
 
-                ProcessCachedData();
-            }
-        }
-
-        private void ProcessCachedData()
-        {
-            VideoTitle = _cachedResult.title;
-            ChannelName = _cachedResult.uploader;
-
-            AvailableQualities.Clear();
-
-            // نفس المنطق القديم - نجيب كل الجودات المتاحة
-            var uniqueHeights = _cachedResult.formats
-                .Where(f => f.height.HasValue && f.ext == "mp4")
-                .GroupBy(f => f.height)
-                .OrderBy(g => g.Key)
-                .Select(g => g.First());
-
-            foreach (var f in uniqueHeights)
-            {
-                AvailableQualities.Add(new QualityInfo
+                foreach (var videoStream in videoStreams)
                 {
-                    Height = f.height.Value,
-                    FileSize = f.GetSize(),
-                    FormatId = f.format_id
-                });
+                    long? totalSize = null;
 
-                Debug.WriteLine($"Added quality: {f.height}p - Format: {f.ext} - Size: {f.GetSize()} - ID: {f.format_id}");
+                    // حساب الحجم الكلي (فيديو + صوت)
+                    if (videoStream.Size.Bytes > 0)
+                    {
+                        totalSize = videoStream.Size.Bytes;
+                        if (bestAudio != null && bestAudio.Size.Bytes > 0)
+                        {
+                            totalSize += bestAudio.Size.Bytes;
+                        }
+                    }
+
+                    AvailableQualities.Add(new QualityInfo
+                    {
+                        Height = videoStream.VideoResolution.Height,
+                        FileSize = totalSize,
+                        VideoStream = videoStream,
+                        AudioStream = bestAudio
+                    });
+                }
+
+                if (AvailableQualities.Count == 0)
+                {
+                    throw new Exception("No compatible video streams found.");
+                }
             }
-
-            Debug.WriteLine($"Total qualities available: {AvailableQualities.Count}");
+            catch (TypeInitializationException ex)
+            {
+                throw new Exception($"Initialization error: {ex.Message}\nInner: {ex.InnerException?.Message}", ex);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Failed to get video details: {ex.Message}", ex);
+            }
         }
 
-        // الحصول على حجم الفيديو مباشرة من الكاش
         public double GetVideoSizeByHeight()
         {
-            if (_cachedResult == null)
-                return -1;
-
             var quality = AvailableQualities.FirstOrDefault(q => q.Height == SelectedQualityHeight);
 
             if (quality?.FileSize != null)
             {
-                return quality.FileSize.Value / (1024 * 1024);
+                return quality.FileSize.Value / (1024.0 * 1024.0);
             }
 
             return -1;
         }
 
-        // دالة التحميل مع دمج تلقائي
         public async Task DownloadVideoAsync(IProgress<double> progress = null)
         {
-            if (_cachedResult == null)
+            try
             {
-                await GetVideoDetailsAsync();
-            }
+                EnsureYoutubeClientInitialized();
 
-            var quality = AvailableQualities.FirstOrDefault(q => q.Height == SelectedQualityHeight);
+                var quality = AvailableQualities.FirstOrDefault(q => q.Height == SelectedQualityHeight);
 
-            if (quality == null)
-                throw new Exception("Format not found for selected height.");
+                if (quality == null)
+                    throw new Exception("Selected quality not found.");
 
-            // استخدام format selector ذكي - yt-dlp هيختار الأفضل ويدمج تلقائياً
-            string formatSelector = $"bestvideo[height<={SelectedQualityHeight}][ext=mp4]+bestaudio[ext=m4a]/best[height<={SelectedQualityHeight}]";
+                if (quality.VideoStream == null)
+                    throw new Exception("Video stream not found.");
 
-            ProcessStartInfo psiDownload = new ProcessStartInfo
-            {
-                FileName = "yt-dlp.exe",
-                Arguments = $"--no-playlist -f \"{formatSelector}\" --merge-output-format mp4 -o \"{SavePath}\" {VideoUrl}",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding = Encoding.UTF8
-            };
-
-            using (Process process = new Process { StartInfo = psiDownload, EnableRaisingEvents = true })
-            {
-                process.Start();
-
-                while (!process.StandardError.EndOfStream)
+                // إنشاء Progress wrapper
+                var progressHandler = new Progress<double>(p =>
                 {
-                    string line = await process.StandardError.ReadLineAsync();
-
-                    if (line != null && line.Contains("%"))
+                    try
                     {
-                        try
-                        {
-                            int idx = line.IndexOf("%");
-                            string part = line.Substring(0, idx).Trim();
-                            string[] split = part.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                            if (split.Length > 0 && double.TryParse(split.Last(), out double value))
-                            {
-                                progress?.Report(value / 100.0);
-                            }
-                        }
-                        catch
-                        {
-                            // تجاهل أخطاء parsing
-                        }
+                        progress?.Report(p);
                     }
+                    catch
+                    {
+                        // تجاهل أخطاء progress reporting
+                    }
+                });
+
+                // تحضير قائمة الـ streams
+                var streamInfos = new List<IStreamInfo>();
+                streamInfos.Add(quality.VideoStream);
+
+                if (quality.AudioStream != null)
+                {
+                    streamInfos.Add(quality.AudioStream);
                 }
 
-                await Task.Run(() => process.WaitForExit());
+                // تحميل ودمج الفيديو والصوت
+                await _youtube.Videos.Streams.DownloadAsync(
+                    (IStreamInfo)streamInfos,
+                    SavePath,
+                    progressHandler
+                );
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Download failed: {ex.Message}", ex);
             }
         }
 
-        // مسح الكاش إذا احتجت
         public void ClearCache()
         {
-            _cachedResult = null;
+            _streamManifest = null;
+            _videoMetadata = null;
+            AvailableQualities.Clear();
+        }
+
+        public void Dispose()
+        {
+            _youtube = null;
+            ClearCache();
         }
     }
 }

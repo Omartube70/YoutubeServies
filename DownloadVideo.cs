@@ -26,7 +26,6 @@ namespace YoutubeServies
             lblVideoName.Text = _youtubeServies.VideoTitle;
             lblQuality.Text = _youtubeServies.SelectedQualityHeight.ToString() + "p";
 
-            // الحصول على الحجم من الكاش مباشرة (بدون استدعاء async)
             Quality = _youtubeServies.GetVideoSizeByHeight();
 
             if (Quality < 0)
