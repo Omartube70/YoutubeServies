@@ -40,7 +40,6 @@ namespace YoutubeServies
         {
             VideoUrl = videoUrl;
             AvailableQualities = new List<QualityInfo>();
-            // لا تهيئة YoutubeClient هنا - سيتم تهيئته عند الحاجة
         }
 
         private void EnsureYoutubeClientInitialized()
@@ -175,7 +174,7 @@ namespace YoutubeServies
 
                 // تحميل ودمج الفيديو والصوت
                 await _youtube.Videos.Streams.DownloadAsync(
-                    (IStreamInfo)streamInfos,
+                    streamInfos,
                     SavePath,
                     progressHandler
                 );
