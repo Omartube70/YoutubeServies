@@ -160,7 +160,6 @@ namespace YoutubeServies
         private async Task MergeVideoAndAudioAsync(string videoPath, string audioPath, string outputPath)
         {
             var ffmpegPath = FindFFmpegPath();
-            Console.WriteLine($"FFmpeg path: {ffmpegPath}");
 
             if (string.IsNullOrEmpty(ffmpegPath))
             {
