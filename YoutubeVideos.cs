@@ -65,18 +65,13 @@ namespace YoutubeServies
 
             cmbQuality.Items.Clear();
 
-            // إضافة الجودات مع عرض الحجم
             foreach (var q in _youtubeServies.AvailableQualities)
             {
-                // يمكنك عرض الحجم مباشرة أو فقط الجودة
-                cmbQuality.Items.Add(q.DisplayText); // فقط "720p" مثلاً
-                // أو:
-                // cmbQuality.Items.Add($"{q.DisplayText} ({q.SizeText})"); // "720p (125.50 MB)"
+                cmbQuality.Items.Add(q.DisplayText); 
             }
 
             if (cmbQuality.Items.Count > 0)
             {
-                // اختيار أعلى جودة افتراضياً
                 cmbQuality.SelectedIndex = cmbQuality.Items.Count - 1;
             }
         }
@@ -97,13 +92,11 @@ namespace YoutubeServies
                 return;
             }
 
-            // clean file name
             string fileName = lblVideoName.Text;
             string cleanFileName = Regex.Replace(fileName, @"[<>:""/\\|?*]", "");
             if (string.IsNullOrWhiteSpace(cleanFileName))
                 cleanFileName = "video";
 
-            // show save file dialog
             saveFileDialog1.FileName = cleanFileName + ".mp4";
             saveFileDialog1.Filter = "MP4 Video|*.mp4";
             saveFileDialog1.Title = "Save Video As";
@@ -126,7 +119,6 @@ namespace YoutubeServies
             if (cmbQuality.SelectedIndex < 0 || _youtubeServies == null)
                 return;
 
-            // الحصول على الجودة المختارة
             var selectedQuality = _youtubeServies.AvailableQualities[cmbQuality.SelectedIndex];
             _youtubeServies.SelectedQualityHeight = selectedQuality.Height;
 

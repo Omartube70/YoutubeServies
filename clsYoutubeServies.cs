@@ -11,11 +11,9 @@ namespace YoutubeServies
     public class clsYoutubeServies
     {
         public string VideoUrl { get; set; }
-
         public string ChannelName { get; private set; }
         public string VideoTitle { get; private set; }
         public List<QualityInfo> AvailableQualities { get; private set; }
-
         public int SelectedQualityHeight { get; set; }
         public string SavePath { get; set; }
 
@@ -46,81 +44,58 @@ namespace YoutubeServies
         {
             if (_youtube == null)
             {
-                try
-                {
-                    _youtube = new YoutubeClient();
-                }
-                catch (Exception ex)
-                {
-                    throw new Exception($"Failed to initialize YouTube client: {ex.Message}", ex);
-                }
+                _youtube = new YoutubeClient();
             }
         }
 
         public async Task GetVideoDetailsAsync()
         {
-            try
+            EnsureYoutubeClientInitialized();
+
+            _videoMetadata = await _youtube.Videos.GetAsync(VideoUrl);
+            VideoTitle = _videoMetadata.Title;
+            ChannelName = _videoMetadata.Author.ChannelTitle;
+
+            _streamManifest = await _youtube.Videos.Streams.GetManifestAsync(VideoUrl);
+
+            var bestAudio = _streamManifest.GetAudioOnlyStreams()
+                .Where(s => s != null)
+                .OrderByDescending(s => s.Bitrate)
+                .FirstOrDefault();
+
+            var videoStreams = _streamManifest.GetVideoOnlyStreams()
+                .Where(s => s != null && s.VideoCodec != null && s.VideoCodec.Contains("avc"))
+                .OrderBy(s => s.VideoResolution.Height)
+                .GroupBy(s => s.VideoResolution.Height)
+                .Select(g => g.OrderByDescending(s => s.Bitrate).First());
+
+            AvailableQualities.Clear();
+
+            foreach (var videoStream in videoStreams)
             {
-                EnsureYoutubeClientInitialized();
+                long? totalSize = null;
 
-                // جلب معلومات الفيديو
-                _videoMetadata = await _youtube.Videos.GetAsync(VideoUrl);
-                VideoTitle = _videoMetadata.Title;
-                ChannelName = _videoMetadata.Author.ChannelTitle;
-
-                // جلب معلومات الـ streams
-                _streamManifest = await _youtube.Videos.Streams.GetManifestAsync(VideoUrl);
-
-                // جلب أفضل صوت
-                var bestAudio = _streamManifest.GetAudioOnlyStreams()
-                    .Where(s => s != null)
-                    .OrderByDescending(s => s.Bitrate)
-                    .FirstOrDefault();
-
-                // جلب جميع الجودات المتاحة
-                var videoStreams = _streamManifest.GetVideoOnlyStreams()
-                    .Where(s => s != null && s.VideoCodec != null && s.VideoCodec.Contains("avc"))
-                    .OrderBy(s => s.VideoResolution.Height)
-                    .GroupBy(s => s.VideoResolution.Height)
-                    .Select(g => g.OrderByDescending(s => s.Bitrate).First());
-
-                AvailableQualities.Clear();
-
-                foreach (var videoStream in videoStreams)
+                if (videoStream.Size.Bytes > 0)
                 {
-                    long? totalSize = null;
-
-                    // حساب الحجم الكلي (فيديو + صوت)
-                    if (videoStream.Size.Bytes > 0)
+                    totalSize = videoStream.Size.Bytes;
+                    if (bestAudio != null && bestAudio.Size.Bytes > 0)
                     {
-                        totalSize = videoStream.Size.Bytes;
-                        if (bestAudio != null && bestAudio.Size.Bytes > 0)
-                        {
-                            totalSize += bestAudio.Size.Bytes;
-                        }
+                        totalSize += bestAudio.Size.Bytes;
                     }
-
-                    AvailableQualities.Add(new QualityInfo
-                    {
-                        Height = videoStream.VideoResolution.Height,
-                        FileSize = totalSize,
-                        VideoStream = videoStream,
-                        AudioStream = bestAudio
-                    });
                 }
 
-                if (AvailableQualities.Count == 0)
+                AvailableQualities.Add(new QualityInfo
                 {
-                    throw new Exception("No compatible video streams found.");
-                }
+                    Height = videoStream.VideoResolution.Height,
+                    FileSize = totalSize,
+                    VideoStream = videoStream,
+                    AudioStream = bestAudio
+                });
             }
-            catch (TypeInitializationException ex)
+
+            if (AvailableQualities.Count == 0)
             {
-                throw new Exception($"Initialization error: {ex.Message}\nInner: {ex.InnerException?.Message}", ex);
-            }
-            catch (Exception ex)
-            {
-                throw new Exception($"Failed to get video details: {ex.Message}", ex);
+                throw new Exception("No compatible video streams found.");
             }
         }
 
@@ -138,51 +113,116 @@ namespace YoutubeServies
 
         public async Task DownloadVideoAsync(IProgress<double> progress = null)
         {
+            EnsureYoutubeClientInitialized();
+
+            var quality = AvailableQualities.FirstOrDefault(q => q.Height == SelectedQualityHeight);
+
+            if (quality == null)
+                throw new Exception("Selected quality not found.");
+
+            if (quality.VideoStream == null)
+                throw new Exception("Video stream not found.");
+
+            var progressHandler = new Progress<double>(p =>
+            {
+                try
+                {
+                    progress?.Report(p);
+                }
+                catch { }
+            });
+
+            var videoPath = Path.GetTempFileName();
+            var audioPath = Path.GetTempFileName();
+
             try
             {
-                EnsureYoutubeClientInitialized();
-
-                var quality = AvailableQualities.FirstOrDefault(q => q.Height == SelectedQualityHeight);
-
-                if (quality == null)
-                    throw new Exception("Selected quality not found.");
-
-                if (quality.VideoStream == null)
-                    throw new Exception("Video stream not found.");
-
-                // إنشاء Progress wrapper
-                var progressHandler = new Progress<double>(p =>
-                {
-                    try
-                    {
-                        progress?.Report(p);
-                    }
-                    catch
-                    {
-                        // تجاهل أخطاء progress reporting
-                    }
-                });
-
-                // تحضير قائمة الـ streams
-                var streamInfos = new List<IStreamInfo>();
-                streamInfos.Add(quality.VideoStream);
+                await _youtube.Videos.Streams.DownloadAsync(quality.VideoStream, videoPath, progressHandler);
 
                 if (quality.AudioStream != null)
                 {
-                    streamInfos.Add(quality.AudioStream);
-                }
+                    await _youtube.Videos.Streams.DownloadAsync(quality.AudioStream, audioPath);
 
-                // تحميل ودمج الفيديو والصوت
-                await _youtube.Videos.Streams.DownloadAsync(
-                    streamInfos,
-                    SavePath,
-                    progressHandler
-                );
+                    await MergeVideoAndAudioAsync(videoPath, audioPath, SavePath);
+                }
+                else
+                {
+                    File.Move(videoPath, SavePath);
+                }
             }
-            catch (Exception ex)
+            finally
             {
-                throw new Exception($"Download failed: {ex.Message}", ex);
+                if (File.Exists(videoPath)) File.Delete(videoPath);
+                if (File.Exists(audioPath)) File.Delete(audioPath);
             }
+        }
+
+        private async Task MergeVideoAndAudioAsync(string videoPath, string audioPath, string outputPath)
+        {
+            var ffmpegPath = FindFFmpegPath();
+            Console.WriteLine($"FFmpeg path: {ffmpegPath}");
+
+            if (string.IsNullOrEmpty(ffmpegPath))
+            {
+                throw new Exception("FFmpeg not found. Please install FFmpeg or use video-only download.");
+            }
+
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = ffmpegPath,
+                Arguments = $"-i \"{videoPath}\" -i \"{audioPath}\" -c copy -y \"{outputPath}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true
+            };
+
+            using (var process = System.Diagnostics.Process.Start(startInfo))
+            {
+                await Task.Run(() => process.WaitForExit());
+
+                if (process.ExitCode != 0)
+                {
+                    throw new Exception("Failed to merge video and audio.");
+                }
+            }
+        }
+
+        private string FindFFmpegPath()
+        {
+            var paths = new[]
+            {
+                "ffmpeg.exe",
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ffmpeg.exe"),
+                @"C:\ffmpeg\bin\ffmpeg.exe",
+                @"C:\Program Files\ffmpeg\bin\ffmpeg.exe"
+            };
+
+            foreach (var path in paths)
+            {
+                try
+                {
+                    var startInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = path,
+                        Arguments = "-version",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true
+                    };
+
+                    using (var process = System.Diagnostics.Process.Start(startInfo))
+                    {
+                        process.WaitForExit();
+                        if (process.ExitCode == 0)
+                        {
+                            return path;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            return null;
         }
 
         public void ClearCache()
