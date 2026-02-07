@@ -13,6 +13,15 @@ namespace YoutubeServies
 {
     public partial class Form1 : Form
     {
+        public delegate Action DownloadVideoDone();
+
+        public event DownloadVideoDone OnDownloadVideoDone;
+
+        private void onDownloadVideoDone_Invoke()
+        {
+           OnDownloadVideoDone?.Invoke();          
+        }
+
         public Form1()
         {
             InitializeComponent();
@@ -27,7 +36,7 @@ namespace YoutubeServies
 
             if (!isvaild)
             {
-                MessageBox.Show("Invaild! ... Please enter a valid URL.", "Invaild!", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("Invalid! Please enter a valid URL.", "Invalid!", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 _Clear();
                 txtVideoLink.Focus();
                 return;
@@ -43,7 +52,23 @@ namespace YoutubeServies
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Error: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                string errorMessage = ex.Message;
+
+                // تحسين رسالة الخطأ حسب النوع
+                if (ex.InnerException is System.Net.Http.HttpRequestException httpEx)
+                {
+                    if (httpEx.Message.Contains("403"))
+                    {
+                        errorMessage = "YouTube blocked the request (Error 403).\n\n" +
+                            "Possible solutions:\n" +
+                            "1. Update YoutubeExplode to the latest version\n" +
+                            "2. Try a regular YouTube video (not Shorts)\n" +
+                            "3. Wait a few minutes and try again\n" +
+                            "4. YouTube may have temporary restrictions";
+                    }
+                }
+
+                MessageBox.Show($"Error: {errorMessage}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 _Clear();
             }
             finally
@@ -67,12 +92,17 @@ namespace YoutubeServies
 
             foreach (var q in _youtubeServies.AvailableQualities)
             {
-                cmbQuality.Items.Add(q.DisplayText); 
+                cmbQuality.Items.Add(q.DisplayText);
             }
 
             if (cmbQuality.Items.Count > 0)
             {
                 cmbQuality.SelectedIndex = cmbQuality.Items.Count - 1;
+            }
+            else
+            {
+                MessageBox.Show("No video qualities available for this video.",
+                    "No Qualities Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 

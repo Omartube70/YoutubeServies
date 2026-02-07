@@ -44,7 +44,11 @@ namespace YoutubeServies
         {
             if (_youtube == null)
             {
-                _youtube = new YoutubeClient();
+                var httpClient = new System.Net.Http.HttpClient();
+                httpClient.DefaultRequestHeaders.Add("User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+
+                _youtube = new YoutubeClient(httpClient);
             }
         }
 
@@ -52,50 +56,105 @@ namespace YoutubeServies
         {
             EnsureYoutubeClientInitialized();
 
-            _videoMetadata = await _youtube.Videos.GetAsync(VideoUrl);
-            VideoTitle = _videoMetadata.Title;
-            ChannelName = _videoMetadata.Author.ChannelTitle;
-
-            _streamManifest = await _youtube.Videos.Streams.GetManifestAsync(VideoUrl);
-
-            var bestAudio = _streamManifest.GetAudioOnlyStreams()
-                .Where(s => s != null)
-                .OrderByDescending(s => s.Bitrate)
-                .FirstOrDefault();
-
-            var videoStreams = _streamManifest.GetVideoOnlyStreams()
-                .Where(s => s != null && s.VideoCodec != null && s.VideoCodec.Contains("avc"))
-                .OrderBy(s => s.VideoResolution.Height)
-                .GroupBy(s => s.VideoResolution.Height)
-                .Select(g => g.OrderByDescending(s => s.Bitrate).First());
-
-            AvailableQualities.Clear();
-
-            foreach (var videoStream in videoStreams)
+            try
             {
-                long? totalSize = null;
+                _videoMetadata = await _youtube.Videos.GetAsync(VideoUrl);
+                VideoTitle = _videoMetadata.Title;
+                ChannelName = _videoMetadata.Author.ChannelTitle;
 
-                if (videoStream.Size.Bytes > 0)
+                // إضافة delay صغير عشان نتجنب rate limiting
+                await Task.Delay(500);
+
+                _streamManifest = await _youtube.Videos.Streams.GetManifestAsync(VideoUrl);
+
+                var bestAudio = _streamManifest.GetAudioOnlyStreams()
+                    .Where(s => s != null)
+                    .OrderByDescending(s => s.Bitrate)
+                    .FirstOrDefault();
+
+                // أولاً نجرب نجيب video streams بس (avc codec)
+                var videoStreams = _streamManifest.GetVideoOnlyStreams()
+                    .Where(s => s != null && s.VideoCodec != null && s.VideoCodec.Contains("avc"))
+                    .OrderBy(s => s.VideoResolution.Height)
+                    .GroupBy(s => s.VideoResolution.Height)
+                    .Select(g => g.OrderByDescending(s => s.Bitrate).First())
+                    .ToList();
+
+                // لو مفيش avc streams، نجرب أي video streams متاحة
+                if (!videoStreams.Any())
                 {
-                    totalSize = videoStream.Size.Bytes;
-                    if (bestAudio != null && bestAudio.Size.Bytes > 0)
+                    videoStreams = _streamManifest.GetVideoOnlyStreams()
+                        .Where(s => s != null)
+                        .OrderBy(s => s.VideoResolution.Height)
+                        .GroupBy(s => s.VideoResolution.Height)
+                        .Select(g => g.OrderByDescending(s => s.Bitrate).First())
+                        .ToList();
+                }
+
+                // لو لسه مفيش، نستخدم muxed streams (فيديو + صوت مع بعض)
+                if (!videoStreams.Any())
+                {
+                    var muxedStreams = _streamManifest.GetMuxedStreams()
+                        .OrderBy(s => s.VideoResolution.Height)
+                        .GroupBy(s => s.VideoResolution.Height)
+                        .Select(g => g.OrderByDescending(s => s.Bitrate).First());
+
+                    foreach (var muxedStream in muxedStreams)
                     {
-                        totalSize += bestAudio.Size.Bytes;
+                        AvailableQualities.Add(new QualityInfo
+                        {
+                            Height = muxedStream.VideoResolution.Height,
+                            FileSize = muxedStream.Size.Bytes,
+                            VideoStream = muxedStream,
+                            AudioStream = null // الصوت موجود في نفس الـ stream
+                        });
+                    }
+                }
+                else
+                {
+                    // نضيف video streams مع audio منفصل
+                    foreach (var videoStream in videoStreams)
+                    {
+                        long? totalSize = null;
+
+                        if (videoStream.Size.Bytes > 0)
+                        {
+                            totalSize = videoStream.Size.Bytes;
+                            if (bestAudio != null && bestAudio.Size.Bytes > 0)
+                            {
+                                totalSize += bestAudio.Size.Bytes;
+                            }
+                        }
+
+                        AvailableQualities.Add(new QualityInfo
+                        {
+                            Height = videoStream.VideoResolution.Height,
+                            FileSize = totalSize,
+                            VideoStream = videoStream,
+                            AudioStream = bestAudio
+                        });
                     }
                 }
 
-                AvailableQualities.Add(new QualityInfo
+                if (AvailableQualities.Count == 0)
                 {
-                    Height = videoStream.VideoResolution.Height,
-                    FileSize = totalSize,
-                    VideoStream = videoStream,
-                    AudioStream = bestAudio
-                });
+                    throw new Exception("No compatible video streams found for this video.");
+                }
             }
-
-            if (AvailableQualities.Count == 0)
+            catch (YoutubeExplode.Exceptions.VideoUnavailableException ex)
             {
-                throw new Exception("No compatible video streams found.");
+                throw new Exception("This video is unavailable or has been removed.", ex);
+            }
+            catch (System.Net.Http.HttpRequestException ex) when (ex.Message.Contains("403"))
+            {
+                throw new Exception("YouTube blocked the request (403 Forbidden). Please try:\n" +
+                    "1. Update YoutubeExplode to the latest version\n" +
+                    "2. Try a different video\n" +
+                    "3. YouTube may have temporary restrictions", ex);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Failed to get video details: {ex.Message}", ex);
             }
         }
 
@@ -132,6 +191,14 @@ namespace YoutubeServies
                 catch { }
             });
 
+            // لو الـ stream فيه صوت وفيديو مع بعض (muxed)
+            if (quality.AudioStream == null)
+            {
+                await _youtube.Videos.Streams.DownloadAsync(quality.VideoStream, SavePath, progressHandler);
+                return;
+            }
+
+            // لو الفيديو والصوت منفصلين
             var videoPath = Path.GetTempFileName();
             var audioPath = Path.GetTempFileName();
 
@@ -152,8 +219,14 @@ namespace YoutubeServies
             }
             finally
             {
-                if (File.Exists(videoPath)) File.Delete(videoPath);
-                if (File.Exists(audioPath)) File.Delete(audioPath);
+                if (File.Exists(videoPath))
+                {
+                    try { File.Delete(videoPath); } catch { }
+                }
+                if (File.Exists(audioPath))
+                {
+                    try { File.Delete(audioPath); } catch { }
+                }
             }
         }
 
@@ -172,16 +245,21 @@ namespace YoutubeServies
                 Arguments = $"-i \"{videoPath}\" -i \"{audioPath}\" -c copy -y \"{outputPath}\"",
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                RedirectStandardError = true
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
             };
 
             using (var process = System.Diagnostics.Process.Start(startInfo))
             {
+                // قراءة الـ output بشكل غير متزامن عشان نتجنب الـ deadlock
+                process.BeginErrorReadLine();
+                process.BeginOutputReadLine();
+
                 await Task.Run(() => process.WaitForExit());
 
                 if (process.ExitCode != 0)
                 {
-                    throw new Exception("Failed to merge video and audio.");
+                    throw new Exception("Failed to merge video and audio with FFmpeg.");
                 }
             }
         }
@@ -193,7 +271,8 @@ namespace YoutubeServies
                 "ffmpeg.exe",
                 Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ffmpeg.exe"),
                 @"C:\ffmpeg\bin\ffmpeg.exe",
-                @"C:\Program Files\ffmpeg\bin\ffmpeg.exe"
+                @"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "ffmpeg", "bin", "ffmpeg.exe")
             };
 
             foreach (var path in paths)
@@ -206,7 +285,8 @@ namespace YoutubeServies
                         Arguments = "-version",
                         UseShellExecute = false,
                         CreateNoWindow = true,
-                        RedirectStandardOutput = true
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
                     };
 
                     using (var process = System.Diagnostics.Process.Start(startInfo))
