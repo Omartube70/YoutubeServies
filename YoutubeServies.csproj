@@ -38,15 +38,6 @@
     <Reference Include="AngleSharp, Version=1.3.0.0, Culture=neutral, PublicKeyToken=e83494dcdc6d31ea, processorArchitecture=MSIL">
       <HintPath>packages\AngleSharp.1.3.0\lib\net472\AngleSharp.dll</HintPath>
     </Reference>
-    <Reference Include="CliWrap, Version=3.6.6.0, Culture=neutral, PublicKeyToken=1c4a4fc2d6886e5a, processorArchitecture=MSIL">
-      <HintPath>packages\CliWrap.3.6.6\lib\net462\CliWrap.dll</HintPath>
-    </Reference>
-    <Reference Include="FFmpeg.AutoGen, Version=8.0.0.0, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>packages\FFmpeg.AutoGen.8.0.0\lib\netstandard2.0\FFmpeg.AutoGen.dll</HintPath>
-    </Reference>
-    <Reference Include="FFMpegCore, Version=5.0.0.0, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>packages\FFMpegCore.5.4.0\lib\netstandard2.0\FFMpegCore.dll</HintPath>
-    </Reference>
     <Reference Include="Instances, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
       <HintPath>packages\Instances.3.0.2\lib\netstandard2.0\Instances.dll</HintPath>
     </Reference>
@@ -101,23 +92,23 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="clsValidtion.cs" />
-    <Compile Include="clsYoutubeServies.cs" />
-    <Compile Include="DownloadVideo.cs">
+    <Compile Include="business\clsValidtion.cs" />
+    <Compile Include="business\clsYoutubeServies.cs" />
+    <Compile Include="Forms\DownloadVideo.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="DownloadVideo.Designer.cs">
+    <Compile Include="Forms\DownloadVideo.Designer.cs">
       <DependentUpon>DownloadVideo.cs</DependentUpon>
     </Compile>
-    <Compile Include="YoutubeVideos.cs">
+    <Compile Include="Forms\YoutubeVideos.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="YoutubeVideos.Designer.cs">
+    <Compile Include="Forms\YoutubeVideos.Designer.cs">
       <DependentUpon>YoutubeVideos.cs</DependentUpon>
     </Compile>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <EmbeddedResource Include="DownloadVideo.resx">
+    <EmbeddedResource Include="Forms\DownloadVideo.resx">
       <DependentUpon>DownloadVideo.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Properties\Resources.resx">
@@ -130,7 +121,7 @@
       <DependentUpon>Resources.resx</DependentUpon>
       <DesignTime>True</DesignTime>
     </Compile>
-    <EmbeddedResource Include="YoutubeVideos.resx">
+    <EmbeddedResource Include="Forms\YoutubeVideos.resx">
       <DependentUpon>YoutubeVideos.cs</DependentUpon>
     </EmbeddedResource>
     <None Include="packages.config" />

@@ -13,21 +13,12 @@ namespace YoutubeServies
 {
     public partial class Form1 : Form
     {
-        public delegate Action DownloadVideoDone();
-
-        public event DownloadVideoDone OnDownloadVideoDone;
-
-        private void onDownloadVideoDone_Invoke()
-        {
-           OnDownloadVideoDone?.Invoke();          
-        }
+        private clsYoutubeServies _youtubeServies;
 
         public Form1()
         {
             InitializeComponent();
         }
-
-        private clsYoutubeServies _youtubeServies;
 
         private async void btnCheck_Click(object sender, EventArgs e)
         {
@@ -42,7 +33,6 @@ namespace YoutubeServies
                 return;
             }
 
-            // تعطيل الزر أثناء التحميل
             btnCheck.Enabled = false;
             this.Cursor = Cursors.WaitCursor;
 
@@ -54,17 +44,15 @@ namespace YoutubeServies
             {
                 string errorMessage = ex.Message;
 
-                // تحسين رسالة الخطأ حسب النوع
                 if (ex.InnerException is System.Net.Http.HttpRequestException httpEx)
                 {
                     if (httpEx.Message.Contains("403"))
                     {
                         errorMessage = "YouTube blocked the request (Error 403).\n\n" +
                             "Possible solutions:\n" +
-                            "1. Update YoutubeExplode to the latest version\n" +
-                            "2. Try a regular YouTube video (not Shorts)\n" +
-                            "3. Wait a few minutes and try again\n" +
-                            "4. YouTube may have temporary restrictions";
+                            "1. Try a regular YouTube video (not Shorts)\n" +
+                            "2. Wait a few minutes and try again\n" +
+                            "3. YouTube may have temporary restrictions";
                     }
                 }
 
@@ -82,7 +70,6 @@ namespace YoutubeServies
         {
             _youtubeServies = new clsYoutubeServies(videoUrl);
 
-            // استدعاء واحد فقط لجلب كل المعلومات
             await _youtubeServies.GetVideoDetailsAsync();
 
             lblChannelName.Text = _youtubeServies.ChannelName;
@@ -140,8 +127,15 @@ namespace YoutubeServies
                 _youtubeServies.SavePath = SavePath;
 
                 DownloadVideo downloadForm = new DownloadVideo(_youtubeServies);
+                downloadForm.OnDownloadVideoDone += OnDownloadVideoDone;
                 downloadForm.ShowDialog();
             }
+        }
+
+        private void OnDownloadVideoDone()
+        {
+            MessageBox.Show("Download completed successfully!", "Download Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            _Clear();
         }
 
         private void cmbQuality_SelectedIndexChanged(object sender, EventArgs e)
@@ -153,6 +147,11 @@ namespace YoutubeServies
             _youtubeServies.SelectedQualityHeight = selectedQuality.Height;
 
             btnDownload.Enabled = true;
+        }
+
+        private void Form1_Load(object sender, EventArgs e)
+        {
+
         }
     }
 }

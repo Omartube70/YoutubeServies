@@ -15,6 +15,15 @@ namespace YoutubeServies
         private clsYoutubeServies _youtubeServies;
         public double Quality { get; private set; }
 
+        public delegate void DownloadVideoDone();
+
+        public event DownloadVideoDone OnDownloadVideoDone;
+
+        private void onDownloadVideoDone_Invoke()
+        {
+            OnDownloadVideoDone?.Invoke();
+        }
+
         public DownloadVideo(clsYoutubeServies youtubeServies)
         {
             InitializeComponent();
@@ -59,7 +68,7 @@ namespace YoutubeServies
             try
             {
                 await _youtubeServies.DownloadVideoAsync(progressIndicator);
-                MessageBox.Show("Download Done!", "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                onDownloadVideoDone_Invoke();
                 this.Close();
             }
             catch (Exception ex)

@@ -62,7 +62,6 @@ namespace YoutubeServies
                 VideoTitle = _videoMetadata.Title;
                 ChannelName = _videoMetadata.Author.ChannelTitle;
 
-                // إضافة delay صغير عشان نتجنب rate limiting
                 await Task.Delay(500);
 
                 _streamManifest = await _youtube.Videos.Streams.GetManifestAsync(VideoUrl);
@@ -72,7 +71,6 @@ namespace YoutubeServies
                     .OrderByDescending(s => s.Bitrate)
                     .FirstOrDefault();
 
-                // أولاً نجرب نجيب video streams بس (avc codec)
                 var videoStreams = _streamManifest.GetVideoOnlyStreams()
                     .Where(s => s != null && s.VideoCodec != null && s.VideoCodec.Contains("avc"))
                     .OrderBy(s => s.VideoResolution.Height)
@@ -80,7 +78,6 @@ namespace YoutubeServies
                     .Select(g => g.OrderByDescending(s => s.Bitrate).First())
                     .ToList();
 
-                // لو مفيش avc streams، نجرب أي video streams متاحة
                 if (!videoStreams.Any())
                 {
                     videoStreams = _streamManifest.GetVideoOnlyStreams()
@@ -91,7 +88,6 @@ namespace YoutubeServies
                         .ToList();
                 }
 
-                // لو لسه مفيش، نستخدم muxed streams (فيديو + صوت مع بعض)
                 if (!videoStreams.Any())
                 {
                     var muxedStreams = _streamManifest.GetMuxedStreams()
@@ -106,13 +102,12 @@ namespace YoutubeServies
                             Height = muxedStream.VideoResolution.Height,
                             FileSize = muxedStream.Size.Bytes,
                             VideoStream = muxedStream,
-                            AudioStream = null // الصوت موجود في نفس الـ stream
+                            AudioStream = null 
                         });
                     }
                 }
                 else
                 {
-                    // نضيف video streams مع audio منفصل
                     foreach (var videoStream in videoStreams)
                     {
                         long? totalSize = null;
@@ -191,14 +186,12 @@ namespace YoutubeServies
                 catch { }
             });
 
-            // لو الـ stream فيه صوت وفيديو مع بعض (muxed)
             if (quality.AudioStream == null)
             {
                 await _youtube.Videos.Streams.DownloadAsync(quality.VideoStream, SavePath, progressHandler);
                 return;
             }
 
-            // لو الفيديو والصوت منفصلين
             var videoPath = Path.GetTempFileName();
             var audioPath = Path.GetTempFileName();
 
@@ -251,7 +244,6 @@ namespace YoutubeServies
 
             using (var process = System.Diagnostics.Process.Start(startInfo))
             {
-                // قراءة الـ output بشكل غير متزامن عشان نتجنب الـ deadlock
                 process.BeginErrorReadLine();
                 process.BeginOutputReadLine();
 
